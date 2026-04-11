@@ -71,7 +71,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     status_msg = await update.message.reply_text(
         f"📤 Sending {len(FILES)} files...\n"
-        f"⏱️ Files will be deleted in 2 minutes."
+        f"⏱️ Files will be deleted in 2 minutes.password:https://t.me/pc_game_down"
     )
     
     sent_messages = [status_msg.message_id]

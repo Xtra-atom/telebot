@@ -1,5 +1,6 @@
 import asyncio
 import os
+import sys
 import logging
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
@@ -12,16 +13,25 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Get bot token from environment variable
-BOT_TOKEN = os.getenv("BOT_TOKEN")
+# Debug: Print all environment variables (remove in production)
+logger.info("Checking environment variables...")
+logger.info(f"Available env vars: {[k for k in os.environ.keys() if 'TOKEN' in k or 'BOT' in k]}")
+
+# Try to get bot token from different possible names
+BOT_TOKEN = os.getenv("BOT_TOKEN") or os.getenv("BOTTOKEN") or os.getenv("bot_token")
 
 if not BOT_TOKEN:
+    logger.error("=" * 50)
     logger.error("BOT_TOKEN environment variable is not set!")
-    raise ValueError("BOT_TOKEN environment variable is not set!")
+    logger.error("Please check Railway Variables tab and add BOT_TOKEN")
+    logger.error("=" * 50)
+    sys.exit(1)
+
+logger.info("Bot token found! Length: %d characters", len(BOT_TOKEN))
 
 DELETE_AFTER = 120  # 2 minutes
-BATCH_SIZE = 5  # Send files in batches to avoid rate limits
-BATCH_DELAY = 1  # Seconds between batches
+BATCH_SIZE = 5
+BATCH_DELAY = 1
 
 FILES = [
     "BQACAgQAAxkBAAFG9SBp2jDH8yzPdwAB8rp0aD6KwejscpQAAgQIAALv4OBT-OTF_YW72zU7BA",
@@ -61,9 +71,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     chat_id = update.effective_chat.id
     
-    logger.info(f"User {user.id} (@{user.username}) requested files in chat {chat_id}")
+    logger.info(f"User {user.id} (@{user.username}) requested files")
     
-    # Send initial notification
     status_msg = await update.message.reply_text(
         f"📤 Sending {len(FILES)} files... They will be deleted in 2 minutes."
     )
@@ -72,7 +81,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     failed_files = 0
 
     try:
-        # Send files in batches to avoid hitting rate limits
         for i in range(0, len(FILES), BATCH_SIZE):
             batch = FILES[i:i + BATCH_SIZE]
             
@@ -84,69 +92,43 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         caption=f"📄 Part {file_num}/{len(FILES)}"
                     )
                     sent_messages.append(msg.message_id)
-                    await asyncio.sleep(0.05)  # Small delay between messages
+                    await asyncio.sleep(0.05)
                     
                 except TelegramError as e:
                     logger.error(f"Failed to send file {file_num}: {e}")
                     failed_files += 1
             
-            # Delay between batches
             if i + BATCH_SIZE < len(FILES):
                 await asyncio.sleep(BATCH_DELAY)
         
-        # Update status with completion info
-        if failed_files > 0:
-            await context.bot.edit_message_text(
-                chat_id=chat_id,
-                message_id=status_msg.message_id,
-                text=f"✅ Sent {len(FILES) - failed_files}/{len(FILES)} files. "
-                     f"Failed: {failed_files}. Deleting in 2 minutes..."
-            )
-        else:
-            await context.bot.edit_message_text(
-                chat_id=chat_id,
-                message_id=status_msg.message_id,
-                text=f"✅ All {len(FILES)} files sent successfully! Deleting in 2 minutes..."
-            )
+        await context.bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=status_msg.message_id,
+            text=f"✅ Sent {len(FILES) - failed_files}/{len(FILES)} files. Deleting in 2 minutes..."
+        )
         
-        # Wait for deletion timer
         await asyncio.sleep(DELETE_AFTER)
         
-        # Delete all sent messages
         deleted_count = 0
         for msg_id in sent_messages:
             try:
                 await context.bot.delete_message(chat_id=chat_id, message_id=msg_id)
                 deleted_count += 1
-                await asyncio.sleep(0.05)  # Small delay to avoid rate limits
-            except TelegramError as e:
-                logger.debug(f"Could not delete message {msg_id}: {e}")
+                await asyncio.sleep(0.05)
+            except TelegramError:
+                pass
         
-        logger.info(f"Deleted {deleted_count}/{len(sent_messages)} messages for user {user.id}")
+        logger.info(f"Deleted {deleted_count}/{len(sent_messages)} messages")
         
     except Exception as e:
-        logger.error(f"Error in start command for user {user.id}: {e}")
-        try:
-            await update.message.reply_text("❌ An error occurred. Please try again later.")
-        except:
-            pass
-
-async def health_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Simple health check command"""
-    await update.message.reply_text("✅ Bot is running!")
+        logger.error(f"Error: {e}")
+        await update.message.reply_text("❌ An error occurred. Please try again later.")
 
 if __name__ == "__main__":
-    # Log startup
-    logger.info("Starting Telegram bot...")
-    logger.info(f"Loaded {len(FILES)} file IDs")
+    logger.info("Starting bot with token: %s...%s", BOT_TOKEN[:10], BOT_TOKEN[-10:])
     
-    # Build application
     app = ApplicationBuilder().token(BOT_TOKEN).build()
-    
-    # Add handlers
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("health", health_check))
     
-    # Start polling
-    logger.info("Bot is polling for updates...")
+    logger.info("Bot is polling...")
     app.run_polling(drop_pending_updates=True)
